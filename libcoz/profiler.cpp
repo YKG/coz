@@ -116,7 +116,7 @@ void profiler::profiler_thread(spinlock& l) {
   // Wait until there is at least one progress point
   _throughput_points_lock.lock();
   _latency_points_lock.lock();
-  while(_throughput_points.size() == 0 && _latency_points.size() == 0 && _running) {
+  while(_throughput_points.size() == 0 && _latency_points.size() == 0 && _running.load()) {
     _throughput_points_lock.unlock();
     _latency_points_lock.unlock();
     wait(ExperimentCoolOffTime);
@@ -131,20 +131,20 @@ void profiler::profiler_thread(spinlock& l) {
   size_t sample_log_countdown = sample_log_interval;
 
   // Main experiment loop
-  while(_running) {
+  while(_running.load()) {
     // Select a line
     line* selected;
     if(_fixed_line) {   // If this run has a fixed line, use it
       selected = _fixed_line;
     } else {            // Otherwise, wait for the next line to be selected
       selected = _next_line.load();
-      while(_running && selected == nullptr) {
+      while(_running.load() && selected == nullptr) {
         wait(SamplePeriod * SampleBatchSize);
         selected = _next_line.load();
       }
 
       // If we're no longer running, exit the experiment loop
-      if(!_running) break;
+      if(!_running.load()) break;
     }
 
     // Store the globally-visible selected line
@@ -191,7 +191,7 @@ void profiler::profiler_thread(spinlock& l) {
 
     // Wait until the experiment ends, or until shutdown if in end-to-end mode
     if(_enable_end_to_end) {
-      while(_running) {
+      while(_running.load()) {
         wait(SamplePeriod * SampleBatchSize);
       }
     } else {
@@ -255,7 +255,7 @@ void profiler::profiler_thread(spinlock& l) {
     }
 
     // Cool off before starting a new experiment, unless the program is exiting
-    if(_running) wait(ExperimentCoolOffTime);
+    if(_running.load()) wait(ExperimentCoolOffTime);
   }
 
   // Log the sample counts on exit
@@ -383,7 +383,7 @@ std::pair<line*,bool> profiler::match_line(perf_event::record& sample) {
   if(l){
     match_res.first = l;
     first_hit = true;
-    if(_selected_line == l){
+    if(_selected_line.load() == l){
       match_res.second = true;
       return match_res;
     }
@@ -397,7 +397,7 @@ std::pair<line*,bool> profiler::match_line(perf_event::record& sample) {
         first_hit = true;
         match_res.first = l;
       }
-      if(_selected_line == l){
+      if(_selected_line.load() == l){
         match_res.first = l;
 	match_res.second = true;
         return match_res;
@@ -413,8 +413,8 @@ void profiler::add_delays(thread_state* state) {
   // Add delays if there is an experiment running
   if(_experiment_active.load()) {
     // Take a snapshot of the global and local delays
-    size_t global_delay = _global_delay;
-    size_t delay_size = _delay_size;
+    size_t global_delay = _global_delay.load();
+    size_t delay_size = _delay_size.load();
 
     // Is this thread ahead or behind on delays?
     if(state->local_delay > global_delay) {
@@ -432,7 +432,7 @@ void profiler::add_delays(thread_state* state) {
 
   } else {
     // Just skip ahead on delays if there isn't an experiment running
-    state->local_delay = _global_delay;
+    state->local_delay = _global_delay.load();
   }
 }
 
@@ -445,10 +445,10 @@ void profiler::process_samples(thread_state* state) {
         sampled_line.first->add_sample();
       }
 
-      if(_experiment_active) {
+      if(_experiment_active.load()) {
         // Add a delay if the sample is in the selected line
         if(sampled_line.second)
-          state->local_delay += _delay_size;
+          state->local_delay += _delay_size.load();
 
       } else if(sampled_line.first != nullptr && _next_line.load() == nullptr) {
         _next_line.store(sampled_line.first);

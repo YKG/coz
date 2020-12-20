@@ -33,3 +33,4 @@ benchmarks/word_count/word_count_datafiles
 viewer/node_modules
 rust/Cargo.lock
 rust/target
+.vscode

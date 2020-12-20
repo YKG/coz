@@ -144,7 +144,7 @@ public:
       return;
 
     // Handle all samples and add delays as required
-    if(_experiment_active) {
+    if(_experiment_active.load()) {
       state->set_in_use(true);
       add_delays(state);
       state->set_in_use(false);
